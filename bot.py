@@ -1,127 +1,220 @@
 #!/usr/bin/env python3
 """
 MiMo Telegram Bot
-Bot Telegram dengan AI MiMo V2.5 Pro
+Powered by Xiaomi MiMo V2.5 Pro AI
+
+Features:
+- /start - Welcome message
+- /help - Show help
+- /ask <question> - Ask MiMo AI
+- /scan <project> - Scan airdrop project
+- Direct chat - Auto-reply with MiMo AI
 """
+
 import os
-import httpx
+import logging
 import asyncio
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from threading import Thread
 
-# ============ CONFIG ============
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "YOUR_BOT_TOKEN_HERE")
-MIMO_API_KEY = os.getenv("MIMO_API_KEY", "YOUR_MIMO_API_KEY_HERE")
-MIMO_API_URL = "https://api.xiaomimimo.com/v1/chat/completions"
-MODEL = "mimo-v2.5-pro"
+import httpx
+from dotenv import load_dotenv
 
-# ============ MiMo Client ============
-async def chat_with_mimo(user_message: str, system_prompt: str = None) -> str:
-    """Kirim pesan ke MiMo API dan dapatkan respons."""
-    messages = []
+load_dotenv()
+
+# Config
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
+MIMO_API_KEY = os.getenv("MIMO_API_KEY", "")
+MIMO_API_URL = os.getenv("MIMO_API_URL", "https://api.xiaomimimo.com/v1")
+PORT = int(os.getenv("PORT", "8080"))
+
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
+logger = logging.getLogger("mimo-bot")
+
+# ============== Health Check Server (for Railway) ==============
+
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"MiMo Bot is running!")
     
+    def log_message(self, format, *args):
+        pass  # Suppress logs
+
+def start_health_server():
+    server = HTTPServer(("0.0.0.0", PORT), HealthHandler)
+    logger.info(f"Health check server on port {PORT}")
+    server.serve_forever()
+
+# ============== MiMo AI Client ==============
+
+async def ask_mimo(question: str, system_prompt: str = "") -> str:
+    """Ask MiMo AI a question."""
+    if not MIMO_API_KEY:
+        return "❌ MiMo API key not configured!"
+    
+    messages = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
-    
-    messages.append({"role": "user", "content": user_message})
+    messages.append({"role": "user", "content": question})
     
     try:
-        async with httpx.AsyncClient(timeout=60) as client:
-            response = await client.post(
-                MIMO_API_URL,
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                f"{MIMO_API_URL}/chat/completions",
                 json={
-                    "model": MODEL,
+                    "model": "mimo-v2.5-pro",
                     "messages": messages,
-                    "temperature": 0.7,
                     "max_tokens": 2000,
+                    "temperature": 0.7,
                 },
-                headers={
-                    "Authorization": f"Bearer {MIMO_API_KEY}",
-                    "Content-Type": "application/json"
-                }
+                headers={"Authorization": f"Bearer {MIMO_API_KEY}"}
             )
-            
-            if response.status_code == 200:
-                data = response.json()
+            data = resp.json()
+            if "choices" in data:
                 return data["choices"][0]["message"]["content"]
-            else:
-                return f"Error: API returned {response.status_code}"
-                
+            return f"Error: {data.get('error', {}).get('message', 'Unknown error')}"
     except Exception as e:
-        return f"Error: {str(e)}"
+        return f"❌ Error: {str(e)}"
 
-# ============ System Prompt ============
-SYSTEM_PROMPT = """Kamu adalah MiMo Guard AI Assistant, bot Telegram yang membantu dengan:
-- 🛡️ Analisis keamanan DeFi dan crypto
-- 🔍 Informasi tentang airdrop dan mining
-- 💡 Saran investasi (bukan financial advice)
-- 📚 Pengetahuan umum tentang blockchain
+# ============== Telegram Bot ==============
 
-Selalu ramah, informatif, dan gunakan emoji. 
-Jawab dalam bahasa Indonesia.
-"""
+async def send_message(chat_id: int, text: str):
+    """Send message to Telegram."""
+    async with httpx.AsyncClient() as client:
+        await client.post(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+            json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
+        )
 
-# ============ Handlers ============
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler untuk /start"""
-    user = update.effective_user
-    await update.message.reply_text(
-        f"🤖 Halo {user.first_name}! Aku MiMo Guard AI.\n\n"
-        f"Powered by Xiaomi MiMo V2.5 Pro\n\n"
-        f"Ketik pesan apa saja, nanti aku bantu!"
-    )
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler untuk /help"""
-    help_text = """
-🤖 MiMo Guard AI - Commands
-
-/start - Mulai bot
-/help - Bantuan
-/info - Info bot
-
-Atau langsung ketik pertanyaan!
-"""
-    await update.message.reply_text(help_text)
-
-async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler untuk /info"""
-    await update.message.reply_text(
-        "ℹ️ Bot Info\n\n"
-        "🤖 Model: Xiaomi MiMo V2.5 Pro\n"
-        "🔗 API: api.xiaomimimo.com\n"
-        "💡 Fitur: Chat AI, Analisis Crypto"
-    )
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler untuk semua pesan teks"""
-    user_message = update.message.text
+async def handle_update(update: dict):
+    """Handle incoming Telegram update."""
+    message = update.get("message", {})
+    chat_id = message.get("chat", {}).get("id")
+    text = message.get("text", "")
+    username = message.get("from", {}).get("first_name", "User")
     
-    # Show typing indicator
-    await update.message.chat.send_action("typing")
+    if not chat_id or not text:
+        return
     
-    # Get response from MiMo
-    response = await chat_with_mimo(user_message, SYSTEM_PROMPT)
+    logger.info(f"[{username}] {text}")
     
-    # Send response
-    await update.message.reply_text(response)
+    # Command handlers
+    if text == "/start":
+        await send_message(chat_id, 
+            f"🤖 *MiMo Guard Bot*
 
-def main():
-    """Main function"""
-    print("🤖 Starting MiMo Telegram Bot...")
+"
+            f"Halo {username}! Aku bot AI powered by *Xiaomi MiMo V2.5 Pro*.
+
+"
+            f"📋 *Commands:*
+"
+            f"/ask <pertanyaan> - Tanya ke MiMo AI
+"
+            f"/scan <project> - Scan airdrop project
+"
+            f"/help - Bantuan
+
+"
+            f"Atau langsung chat aja! 💬"
+        )
     
-    # Build application
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
+    elif text == "/help":
+        await send_message(chat_id,
+            "📚 *Bantuan MiMo Bot*
+
+"
+            "1️⃣ *Tanya AI:*
+`/ask Apa itu DeFi?`
+
+"
+            "2️⃣ *Scan Project:*
+`/scan LayerZero`
+
+"
+            "3️⃣ *Chat Biasa:*
+Kirim pesan langsung, bot akan balas pakai AI
+
+"
+            "🤖 Powered by Xiaomi MiMo V2.5 Pro"
+        )
     
-    # Add handlers
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("info", info))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    elif text.startswith("/ask "):
+        question = text[5:]
+        await send_message(chat_id, "🤔 Thinking...")
+        response = await ask_mimo(question)
+        await send_message(chat_id, f"🤖 *MiMo:*
+
+{response}")
     
-    # Run bot
-    print("✅ Bot running!")
-    app.run_polling()
+    elif text.startswith("/scan "):
+        project = text[6:]
+        await send_message(chat_id, f"🔍 Scanning *{project}*...")
+        system = "You are a crypto airdrop analyst. Analyze the project and give: legitimacy score (0-100), potential airdrop chance, risks, and recommendation. Be concise."
+        response = await ask_mimo(f"Analyze this crypto project for airdrop potential: {project}", system)
+        await send_message(chat_id, f"📊 *Scan Result: {project}*
+
+{response}")
+    
+    elif text.startswith("/"):
+        await send_message(chat_id, "❌ Command tidak dikenal. Ketik /help untuk bantuan.")
+    
+    else:
+        # Auto-reply for regular messages
+        await send_message(chat_id, "🤔 Thinking...")
+        system = "You are MiMo Guard Bot, a helpful AI assistant powered by Xiaomi MiMo. Be concise and helpful. Reply in the same language the user uses."
+        response = await ask_mimo(text, system)
+        await send_message(chat_id, f"🤖 {response}")
+
+async def poll_updates():
+    """Long-poll for Telegram updates."""
+    offset = 0
+    async with httpx.AsyncClient() as client:
+        while True:
+            try:
+                resp = await client.get(
+                    f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates",
+                    params={"offset": offset, "timeout": 30}
+                )
+                data = resp.json()
+                
+                if data.get("ok"):
+                    for update in data.get("result", []):
+                        offset = update["update_id"] + 1
+                        await handle_update(update)
+            except Exception as e:
+                logger.error(f"Poll error: {e}")
+                await asyncio.sleep(5)
+
+async def main():
+    """Main entry point."""
+    if not TELEGRAM_TOKEN:
+        print("❌ TELEGRAM_TOKEN not set!")
+        return
+    
+    # Start health check server in background
+    Thread(target=start_health_server, daemon=True).start()
+    
+    # Set bot commands
+    async with httpx.AsyncClient() as client:
+        await client.post(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setMyCommands",
+            json={"commands": [
+                {"command": "start", "description": "Start the bot"},
+                {"command": "ask", "description": "Ask MiMo AI a question"},
+                {"command": "scan", "description": "Scan airdrop project"},
+                {"command": "help", "description": "Show help"},
+            ]}
+        )
+    
+    logger.info("🤖 MiMo Bot started!")
+    await poll_updates()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
