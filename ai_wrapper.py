@@ -6,7 +6,6 @@ Usage:
     from ai_wrapper import call_ai
     
     response = await call_ai("Analyze this DeFi protocol...")
-    response = await call_ai("What is Uniswap?", provider="mimo")
 """
 
 import os
@@ -14,14 +13,11 @@ import httpx
 import asyncio
 from typing import Optional
 
-# Provider configs
+# Provider configs — using env vars that match user's .env
 PROVIDERS = {
     "mimo": {
-        "url": "https://api.xiaomimimo.com/v1/chat/completions",
-        "keys": [
-            os.getenv("MIMO_API_KEY_1", ""),
-            os.getenv("MIMO_API_KEY_2", ""),
-        ],
+        "url": os.getenv("XIAOMI_BASE_URL", "https://api.xiaomimimo.com/v1/chat/completions"),
+        "keys": [os.getenv("XIAOMI_API_KEY", "")],
         "model": "mimo-v2.5-pro",
         "timeout": 60,
     },
@@ -86,7 +82,7 @@ async def _call_provider(
     if not keys:
         return None
 
-    # Round-robin for MiMo, first key for others
+    # Round-robin for MiMo
     if provider_name == "mimo" and len(keys) > 1:
         key = keys[_mimo_key_index % len(keys)]
         _mimo_key_index += 1
@@ -124,19 +120,13 @@ async def _call_provider(
                 headers=headers,
             )
             if resp.status_code == 401:
-                print(f"⚠️  {provider_name}: API key invalid")
                 return None
             if resp.status_code == 429:
-                print(f"⚠️  {provider_name}: Rate limited")
                 return None
             resp.raise_for_status()
             data = resp.json()
             return data["choices"][0]["message"]["content"]
-    except httpx.TimeoutException:
-        print(f"⚠️  {provider_name}: Timeout")
-        return None
-    except Exception as e:
-        print(f"⚠️  {provider_name}: {str(e)[:80]}")
+    except Exception:
         return None
 
 
@@ -149,16 +139,6 @@ async def call_ai(
 ) -> str:
     """
     Call AI with auto-fallback.
-    
-    Args:
-        message: User message
-        system: System prompt (default: DeFi agent)
-        history: Previous messages [{"role": "user/assistant", "content": "..."}]
-        provider: Force specific provider (None = auto-fallback)
-        max_retries: Retry count per provider
-        
-    Returns:
-        AI response string, or fallback error message
     """
     providers_to_try = [provider] if provider else FALLBACK_ORDER
     
