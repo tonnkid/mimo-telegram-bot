@@ -1,58 +1,51 @@
 # 🤖 MiMo Telegram Bot
 
-Bot Telegram dengan AI **Xiaomi MiMo V2.5 Pro**
+Ultimate DeFi AI Assistant powered by Xiaomi MiMo V2.5 Pro
 
-## Fitur
+## Features
 
-- 💬 Chat AI dengan MiMo V2.5 Pro
-- 🛡️ Analisis keamanan crypto
-- 📚 Pengetahuan blockchain
-- 🇮🇩 Bahasa Indonesia
+### 💰 Market & Prices
+- `/price <token>` — Real-time token price (CoinGecko)
+- `/market` — Top 10 crypto market overview
+- `/trending` — Trending coins 24h
+- `/gas` — Ethereum gas prices
+- `/fear` — Fear & Greed Index
+
+### 🛡️ Security
+- `/check <address>` — Scan address/contract for scam
+- `/security` — DeFi security checklist
+- Auto scam detection in chat
+
+### 💡 AI Assistant
+- `/ask <question>` — Ask anything about DeFi
+- `/airdrops` — Latest airdrop info
+- `/defitips` — DeFi tips & tricks
+- `/portfolio` — Portfolio tips
+- `/news` — Crypto news summary
+- `/analyze <project>` — Deep project analysis
+
+### 💬 Smart Chat
+- Just send any message for AI conversation
+- Auto scam keyword detection
 
 ## Setup
 
-### 1. Buat Bot Telegram
-1. Buka [@BotFather](https://t.me/BotFather)
-2. Kirim `/newbot`
-3. Ikuti instruksi, simpan token
+1. Clone this repo
+2. Copy `.env.example` to `.env`
+3. Fill in `TELEGRAM_TOKEN` and `MIMO_API_KEY`
+4. `pip install -r requirements.txt`
+5. `python bot.py`
 
-### 2. Dapatkan MiMo API Key
-1. Buka [platform.xiaomimimo.com](https://platform.xiaomimimo.com)
-2. Buat akun, generate API key
+## Deploy on Railway
 
-### 3. Install & Jalankan
-
-```bash
-# Clone repo
-git clone https://github.com/tonnkid/mimo-telegram-bot.git
-cd mimo-telegram-bot
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Copy .env
-cp .env.example .env
-# Edit .env, isi token & API key
-
-# Jalankan
-python bot.py
-```
-
-### 4. Test di Telegram
-Cari bot kamu, kirim `/start`, lalu chat!
-
-## Commands
-
-- `/start` - Mulai bot
-- `/help` - Bantuan
-- `/info` - Info bot
+1. Fork this repo
+2. Go to Railway
+3. New Project -> Deploy from GitHub
+4. Add Environment Variables
+5. Deploy!
 
 ## Tech Stack
-
-- Python 3.11+
-- python-telegram-bot
+- Python 3.11
+- python-telegram-bot 21+
 - Xiaomi MiMo V2.5 Pro API
-
-## License
-
-MIT
+- CoinGecko API (free)
