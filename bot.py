@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
 MiMo Telegram Bot - Ultimate DeFi AI Assistant
-Powered by Xiaomi MiMo V2.5 Pro
+Powered by Multi-Provider AI (MiMo → OpenRouter → DeepSeek → Groq)
 """
 
 import logging
 import os
 import json
+import asyncio
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -16,12 +17,12 @@ from telegram.ext import (
 import httpx
 from dotenv import load_dotenv
 
+# Import multi-provider AI wrapper
+from ai_wrapper import call_ai, check_providers, DEFI_SYSTEM
+
 load_dotenv()
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
-MIMO_API_KEY = os.getenv("MIMO_API_KEY", "")
-MIMO_API_URL = os.getenv("MIMO_API_URL", "https://api.xiaomimimo.com/v1")
-MIMO_MODEL = os.getenv("MIMO_MODEL", "mimo-v2.5-pro")
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -32,34 +33,6 @@ logger = logging.getLogger(__name__)
 if not TELEGRAM_TOKEN:
     logger.error("TELEGRAM_TOKEN not set!")
     exit(1)
-
-# ============================================================
-#  MiMo API Client
-# ============================================================
-
-async def call_mimo(messages: list, max_tokens: int = 2000) -> str:
-    """Call MiMo API with error handling."""
-    if not MIMO_API_KEY:
-        return None
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                f"{MIMO_API_URL}/chat/completions",
-                json={
-                    "model": MIMO_MODEL,
-                    "messages": messages,
-                    "max_tokens": max_tokens,
-                    "temperature": 0.7,
-                },
-                headers={"Authorization": f"Bearer {MIMO_API_KEY}"}
-            )
-            if resp.status_code == 200:
-                return resp.json()["choices"][0]["message"]["content"]
-            else:
-                logger.warning(f"MiMo API returned {resp.status_code}")
-    except Exception as e:
-        logger.error(f"MiMo API error: {e}")
-    return None
 
 
 # ============================================================
@@ -77,12 +50,11 @@ COINGECKO_IDS = {
 }
 
 async def get_price(token: str) -> dict:
-    """Get token price from CoinGecko."""
     token_id = COINGECKO_IDS.get(token.lower(), token.lower())
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(
-                f"https://api.coingecko.com/api/v3/simple/price",
+                "https://api.coingecko.com/api/v3/simple/price",
                 params={
                     "ids": token_id,
                     "vs_currencies": "usd",
@@ -105,7 +77,6 @@ async def get_price(token: str) -> dict:
 
 
 async def get_market_overview() -> list:
-    """Get top 10 coins market data."""
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(
@@ -127,7 +98,6 @@ async def get_market_overview() -> list:
 
 
 async def get_gas_prices() -> dict:
-    """Get Ethereum gas prices."""
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get("https://api.etherscan.io/api?module=gastracker&action=gasoracle")
@@ -144,7 +114,6 @@ async def get_gas_prices() -> dict:
 
 
 async def get_trending() -> list:
-    """Get trending coins."""
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get("https://api.coingecko.com/api/v3/search/trending")
@@ -156,7 +125,6 @@ async def get_trending() -> list:
 
 
 async def get_fear_greed() -> dict:
-    """Get Fear & Greed Index."""
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get("https://api.alternative.me/fng/?limit=1")
@@ -182,7 +150,6 @@ SCAM_KEYWORDS = [
 ]
 
 def quick_scam_check(text: str) -> dict:
-    """Quick scam keyword check."""
     text_lower = text.lower()
     found = [kw for kw in SCAM_KEYWORDS if kw in text_lower]
     if found:
@@ -192,6 +159,17 @@ def quick_scam_check(text: str) -> dict:
             "flags": found,
         }
     return {"safe": True, "risk": "LOW", "flags": []}
+
+
+# ============================================================
+#  AI Helper (using multi-provider wrapper)
+# ============================================================
+
+async def ask_ai(query: str, system: str = None) -> str:
+    """Ask AI using multi-provider wrapper with auto-fallback."""
+    if system is None:
+        system = DEFI_SYSTEM
+    return await call_ai(query, system=system)
 
 
 # ============================================================
@@ -206,13 +184,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
          InlineKeyboardButton("⛽ Gas", callback_data="gas")],
         [InlineKeyboardButton("🛡️ Scan Scam", callback_data="scan"),
          InlineKeyboardButton("🪂 Airdrops", callback_data="airdrops")],
-        [InlineKeyboardButton("❓ Help", callback_data="help")],
+        [InlineKeyboardButton("🤖 AI Status", callback_data="providers"),
+         InlineKeyboardButton("❓ Help", callback_data="help")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     text = (
         "🛡️ *MiMo Guard Bot*\n\n"
         "Ultimate DeFi AI Assistant\n"
-        "Powered by Xiaomi MiMo V2.5 Pro\n\n"
+        "Powered by Multi-Provider AI\n"
+        "(MiMo → OpenRouter → DeepSeek → Groq)\n\n"
         "📌 *Commands:*\n"
         "/ask <pertanyaan> — Tanya AI\n"
         "/price <token> — Harga token\n"
@@ -227,7 +207,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/defitips — Tips DeFi\n"
         "/security — Security checklist\n"
         "/portfolio — Tips portfolio\n"
-        "/news — Berita crypto terbaru\n\n"
+        "/news — Berita crypto terbaru\n"
+        "/providers — Cek AI status\n\n"
         "💬 Atau langsung chat aja!"
     )
     await update.message.reply_text(text, parse_mode="Markdown", reply_markup=reply_markup)
@@ -251,9 +232,24 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/defitips — Tips DeFi\n"
         "/airdrops — Info airdrop\n"
         "/portfolio — Tips portfolio\n"
-        "/news — Berita crypto\n\n"
+        "/news — Berita crypto\n"
+        "/providers — AI status\n\n"
         "💬 Langsung chat juga bisa!"
     )
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+
+# --- PROVIDERS STATUS COMMAND ---
+async def providers_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🔍 Checking AI providers...")
+    status = await check_providers()
+    
+    text = "🤖 *AI Provider Status*\n\n"
+    for name, info in status.items():
+        text += f"• {info['status']} *{name}*\n"
+        text += f"  Model: `{info['model']}`\n\n"
+    
+    text += "💡 Auto-fallback: MiMo → OpenRouter → DeepSeek → Groq"
     await update.message.reply_text(text, parse_mode="Markdown")
 
 
@@ -398,22 +394,16 @@ async def check_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(f"🔍 Scanning `{address[:20]}...`", parse_mode="Markdown")
 
-    messages = [
-        {"role": "system", "content": (
-            "Kamu adalah DeFi security analyst. Analisis address/contract/URL. "
-            "Kasih output format:\n"
-            "🛡️ Risk Score: X/100\n"
-            "📊 Status: SAFE/WARNING/DANGER\n"
-            "🔍 Findings: (list temuan)\n"
-            "💡 Recommendation: (saran)"
-        )},
-        {"role": "user", "content": f"Cek: {address}"}
-    ]
-    response = await call_mimo(messages)
-    if response:
-        await update.message.reply_text(response)
-    else:
-        await update.message.reply_text("⚠️ AI sedang offline. Coba lagi nanti.")
+    system = (
+        "Kamu adalah DeFi security analyst. Analisis address/contract/URL. "
+        "Kasih output format:\n"
+        "🛡️ Risk Score: X/100\n"
+        "📊 Status: SAFE/WARNING/DANGER\n"
+        "🔍 Findings: (list temuan)\n"
+        "💡 Recommendation: (saran)"
+    )
+    response = await ask_ai(f"Cek: {address}", system=system)
+    await update.message.reply_text(response)
 
 
 # --- ANALYZE PROJECT COMMAND ---
@@ -425,23 +415,17 @@ async def analyze_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(f"📊 Analyzing *{project}*...", parse_mode="Markdown")
 
-    messages = [
-        {"role": "system", "content": (
-            "Kamu adalah crypto project analyst. Analisis project dengan format:\n"
-            "📋 Overview\n"
-            "👥 Team & Backers\n"
-            "💰 Funding & Tokenomics\n"
-            "🪂 Airdrop Potential (jika ada)\n"
-            "⚠️ Risk Factors\n"
-            "💡 Verdict & Recommendation"
-        )},
-        {"role": "user", "content": f"Analisis: {project}"}
-    ]
-    response = await call_mimo(messages)
-    if response:
-        await update.message.reply_text(response)
-    else:
-        await update.message.reply_text("⚠️ AI sedang offline. Coba lagi nanti.")
+    system = (
+        "Kamu adalah crypto project analyst. Analisis project dengan format:\n"
+        "📋 Overview\n"
+        "👥 Team & Backers\n"
+        "💰 Funding & Tokenomics\n"
+        "🪂 Airdrop Potential (jika ada)\n"
+        "⚠️ Risk Factors\n"
+        "💡 Verdict & Recommendation"
+    )
+    response = await ask_ai(f"Analisis: {project}", system=system)
+    await update.message.reply_text(response)
 
 
 # --- TOKEN INFO COMMAND ---
@@ -451,15 +435,9 @@ async def token_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❓ Contoh: /token ETH")
         return
 
-    messages = [
-        {"role": "system", "content": "Kamu adalah crypto token analyst. Kasih info: use case, tokenomics, harga saat ini (estimasi), prospek, risiko."},
-        {"role": "user", "content": f"Info token: {name}"}
-    ]
-    response = await call_mimo(messages)
-    if response:
-        await update.message.reply_text(response)
-    else:
-        await update.message.reply_text("⚠️ AI sedang offline. Coba lagi nanti.")
+    system = "Kamu adalah crypto token analyst. Kasih info: use case, tokenomics, harga saat ini (estimasi), prospek, risiko."
+    response = await ask_ai(f"Info token: {name}", system=system)
+    await update.message.reply_text(response)
 
 
 # --- ASK COMMAND ---
@@ -470,46 +448,28 @@ async def ask_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     await update.message.reply_text("🤔 Mikir dulu...")
-    messages = [
-        {"role": "system", "content": "Kamu adalah asisten DeFi yang helpful. Jawab bahasa Indonesia santai, pakai emoji, max 500 kata."},
-        {"role": "user", "content": query}
-    ]
-    response = await call_mimo(messages)
-    if response:
-        await update.message.reply_text(response)
-    else:
-        await update.message.reply_text("⚠️ AI sedang offline. Coba lagi nanti.")
+    system = "Kamu adalah asisten DeFi yang helpful. Jawab bahasa Indonesia santai, pakai emoji, max 500 kata."
+    response = await ask_ai(query, system=system)
+    await update.message.reply_text(response)
 
 
 # --- AIRDROPS COMMAND ---
 async def airdrops_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🪂 Loading airdrop info...")
-    messages = [
-        {"role": "system", "content": (
-            "Kamu adalah airdrop specialist. Kasih info airdrop terbaru yang legit. "
-            "Format: Nama project, status (upcoming/active/ended), cara ikut, estimasi reward, tingkat kesulitan. "
-            "Sebut 5-7 airdrop yang sedang aktif/upcoming. Kasih warning soal scam."
-        )},
-        {"role": "user", "content": "Info airdrop crypto terbaru 2025/2026"}
-    ]
-    response = await call_mimo(messages)
-    if response:
-        await update.message.reply_text(response)
-    else:
-        await update.message.reply_text("⚠️ AI sedang offline. Coba lagi nanti.")
+    system = (
+        "Kamu adalah airdrop specialist. Kasih info airdrop terbaru yang legit. "
+        "Format: Nama project, status (upcoming/active/ended), cara ikut, estimasi reward, tingkat kesulitan. "
+        "Sebut 5-7 airdrop yang sedang aktif/upcoming. Kasih warning soal scam."
+    )
+    response = await ask_ai("Info airdrop crypto terbaru 2025/2026", system=system)
+    await update.message.reply_text(response)
 
 
 # --- DEFI TIPS COMMAND ---
 async def defitips_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    messages = [
-        {"role": "system", "content": "Kamu adalah DeFi educator. Kasih tips DeFi yang praktis dan actionable. Pakai emoji. Max 300 kata."},
-        {"role": "user", "content": "Kasih tips DeFi yang penting untuk pemula sampai intermediate"}
-    ]
-    response = await call_mimo(messages)
-    if response:
-        await update.message.reply_text(response)
-    else:
-        await update.message.reply_text("⚠️ AI sedang offline. Coba lagi nanti.")
+    system = "Kamu adalah DeFi educator. Kasih tips DeFi yang praktis dan actionable. Pakai emoji. Max 300 kata."
+    response = await ask_ai("Kasih tips DeFi yang penting untuk pemula sampai intermediate", system=system)
+    await update.message.reply_text(response)
 
 
 # --- SECURITY COMMAND ---
@@ -544,29 +504,17 @@ async def security_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- PORTFOLIO TIPS COMMAND ---
 async def portfolio_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    messages = [
-        {"role": "system", "content": "Kamu adalah portfolio advisor. Kasih tips diversifikasi portfolio crypto. Pakai emoji, max 300 kata."},
-        {"role": "user", "content": "Kasih tips portfolio crypto yang balanced untuk pemula sampai intermediate"}
-    ]
-    response = await call_mimo(messages)
-    if response:
-        await update.message.reply_text(response)
-    else:
-        await update.message.reply_text("⚠️ AI sedang offline. Coba lagi nanti.")
+    system = "Kamu adalah portfolio advisor. Kasih tips diversifikasi portfolio crypto. Pakai emoji, max 300 kata."
+    response = await ask_ai("Kasih tips portfolio crypto yang balanced untuk pemula sampai intermediate", system=system)
+    await update.message.reply_text(response)
 
 
 # --- NEWS COMMAND ---
 async def news_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📰 Loading crypto news...")
-    messages = [
-        {"role": "system", "content": "Kamu adalah crypto news analyst. Kasih ringkasan berita crypto terbaru. Max 5 berita, singkat dan padat."},
-        {"role": "user", "content": "Apa berita crypto terbaru hari ini?"}
-    ]
-    response = await call_mimo(messages)
-    if response:
-        await update.message.reply_text(response)
-    else:
-        await update.message.reply_text("⚠️ AI sedang offline. Coba lagi nanti.")
+    system = "Kamu adalah crypto news analyst. Kasih ringkasan berita crypto terbaru. Max 5 berita, singkat dan padat."
+    response = await ask_ai("Apa berita crypto terbaru hari ini?", system=system)
+    await update.message.reply_text(response)
 
 
 # --- CALLBACK QUERY HANDLER ---
@@ -586,6 +534,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("🛡️ Ketik: /check <address>\n\nContoh: /check 0x123...abc")
     elif query.data == "airdrops":
         await airdrops_cmd(update, context)
+    elif query.data == "providers":
+        await providers_cmd(update, context)
     elif query.data == "help":
         await help_cmd(update, context)
 
@@ -607,19 +557,13 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    messages = [
-        {"role": "system", "content": (
-            "Kamu MiMo Guard Bot, asisten DeFi AI. Jawab bahasa Indonesia santai, "
-            "pakai emoji, max 300 kata. Bisa bahas crypto, DeFi, airdrop, security, "
-            "trading, NFT, blockchain. Kalau ditanya scam/hack, kasih warning yang jelas."
-        )},
-        {"role": "user", "content": user_msg}
-    ]
-    response = await call_mimo(messages)
-    if response:
-        await update.message.reply_text(response)
-    else:
-        await update.message.reply_text("🤔 AI lagi istirahat. Pakai /help buat liat command yang tersedia!")
+    system = (
+        "Kamu MiMo Guard Bot, asisten DeFi AI. Jawab bahasa Indonesia santai, "
+        "pakai emoji, max 300 kata. Bisa bahas crypto, DeFi, airdrop, security, "
+        "trading, NFT, blockchain. Kalau ditanya scam/hack, kasih warning yang jelas."
+    )
+    response = await ask_ai(user_msg, system=system)
+    await update.message.reply_text(response)
 
 
 # --- ERROR HANDLER ---
@@ -635,6 +579,7 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     logger.info("MiMo Guard Bot starting...")
+    logger.info("Using multi-provider AI: MiMo → OpenRouter → DeepSeek → Groq")
     app = Application.builder().token(TELEGRAM_TOKEN).build()
 
     # Commands
@@ -654,6 +599,7 @@ def main():
     app.add_handler(CommandHandler("security", security_cmd))
     app.add_handler(CommandHandler("portfolio", portfolio_cmd))
     app.add_handler(CommandHandler("news", news_cmd))
+    app.add_handler(CommandHandler("providers", providers_cmd))
 
     # Callbacks
     app.add_handler(CallbackQueryHandler(button_callback))
@@ -664,7 +610,7 @@ def main():
     # Error
     app.add_error_handler(error_handler)
 
-    logger.info("Bot is running with all features!")
+    logger.info("Bot is running with multi-provider AI!")
     app.run_polling()
 
 
